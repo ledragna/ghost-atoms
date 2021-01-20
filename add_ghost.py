@@ -7,6 +7,8 @@ import argparse
 import numpy as np
 import cclib as cc
 from mol_data import AT_RVDW
+from fchk_io import fchk_geom_parser
+
 
 B2A = 0.529177210903
 PROGNAME = os.path.basename(sys.argv[0])
@@ -120,12 +122,26 @@ def build_parser():
 def main():
     parser = build_parser()
     opts = parser.parse_args()
-    data = cc.ccopen(opts.strucfile).parse()
-    ofile = opts.strucfile[:-4] + '_lp.xyz'
+    filename, file_extension = os.path.splitext(opts.strucfile)
+    cm5_a = False
+    if file_extension == ".fchk":
+        data = fchk_geom_parser(opts.strucfile)
+        xyz = np.array(data['crd'])*B2A
+        anum = data['atnum']
+        if 'cm5' in data:
+            print('CM5 available added to XYZ')
+            cm5_a = True
+            cm5 = data['cm5']
+    else:
+        data = cc.ccopen(opts.strucfile).parse()
+        xyz = data.atomcoords[-1]
+        anum = data.atomnos
+    ofile = filename + '_lp.xyz'
     pt = cc.parser.utils.PeriodicTable()
-    xyz = data.atomcoords[-1]
-    anum = data.atomnos
     oindex = opts.oind - 1
+    if anum[oindex] != 8:
+        print('Not oxigen')
+        sys.exit()
     cno = get_atom_connect(oindex, anum, xyz)
     if len(cno) != 1:
         print("Not a carbonyl oxygen")
@@ -148,10 +164,18 @@ def main():
     anum = np.hstack((anum, np.zeros(2)))
     # anum
     line = '{a:4s}{b[0]:12.6f}{b[1]:12.6f}{b[2]:12.6f}\n'
+    if cm5_a:
+        vscharge = cm5[oindex] / 2
+        cm5[oindex] = 0.0
+        cm5 = np.hstack((cm5,vscharge, vscharge))
+        line = '{a:4s}{b[0]:12.6f}{b[1]:12.6f}{b[2]:12.6f}{c:12.6f}\n'
     toprnt = ''
     for i, item in enumerate(anum):
         symb = pt.element[int(item)] if item else 'X'
-        toprnt += line.format(a=symb, b=xyz[i, :])
+        if cm5_a:
+            toprnt += line.format(a=symb, b=xyz[i, :], c=cm5[i])
+        else:
+            toprnt += line.format(a=symb, b=xyz[i, :])
     if opts.print:
         print(toprnt)
     with open(ofile, 'w') as fopen:
